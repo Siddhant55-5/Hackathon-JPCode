@@ -28,7 +28,6 @@ export const useRiskStore = create<RiskState>((set) => ({
   scores: [],
   alerts: [],
   connectionStatus: 'offline',
-  connectionStatus: 'offline',
   lastUpdated: null,
   isChatOpen: false,
 
