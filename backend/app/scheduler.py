@@ -43,7 +43,7 @@ def start_scheduler() -> None:
 
     # FRED: every 15 minutes
     scheduler.add_job(
-        _wrap_async(fetch_fred_signals),
+        fetch_fred_signals,
         trigger=IntervalTrigger(minutes=15),
         id="fred_connector",
         name="FRED Data Connector",
@@ -52,7 +52,7 @@ def start_scheduler() -> None:
 
     # Yahoo Finance: every 15 minutes
     scheduler.add_job(
-        _wrap_async(fetch_yahoo_signals),
+        fetch_yahoo_signals,
         trigger=IntervalTrigger(minutes=15),
         id="yahoo_connector",
         name="Yahoo Finance Connector",
@@ -61,7 +61,7 @@ def start_scheduler() -> None:
 
     # Macro batch: daily at 06:00 UTC
     scheduler.add_job(
-        _wrap_async(fetch_macro_signals),
+        fetch_macro_signals,
         trigger=CronTrigger(hour=6, minute=0),
         id="macro_connector",
         name="Macro Batch Connector",
@@ -70,14 +70,14 @@ def start_scheduler() -> None:
 
     # ── ML Scoring Jobs ──────────────────────────────────────────
 
-    # Risk scoring: every 15 minutes (offset by 5 min from ingestion)
+    # Risk scoring: every 5 seconds
     async def _run_scoring() -> None:
         from app.services.scoring_service import run_scoring_cycle
         await run_scoring_cycle()
 
     scheduler.add_job(
-        _wrap_async(_run_scoring),
-        trigger=IntervalTrigger(minutes=15),
+        _run_scoring,
+        trigger=IntervalTrigger(seconds=5),
         id="risk_scoring",
         name="Risk Scoring Cycle",
         replace_existing=True,
@@ -89,7 +89,7 @@ def start_scheduler() -> None:
         await run_recalibration()
 
     scheduler.add_job(
-        _wrap_async(_run_recalibration),
+        _run_recalibration,
         trigger=CronTrigger(day_of_week="sun", hour=2, minute=0),
         id="recalibration",
         name="Weekly Model Recalibration",

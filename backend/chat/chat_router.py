@@ -1,8 +1,8 @@
-"""Chat WebSocket router — Claude-powered AI crisis analyst.
+"""Chat WebSocket router — OpenAI-powered AI crisis analyst.
 
 /ws/chat WebSocket endpoint:
   - Loads live context snapshot on connect
-  - Streams Claude responses token-by-token
+  - Streams OpenAI responses token-by-token
   - Manages conversation history with token budget
   - Persists messages in Redis (1h TTL)
 """
@@ -161,7 +161,7 @@ async def _handle_message(
     user_content: str,
     mode: str,
 ) -> None:
-    """Process a user message and stream Claude's response."""
+    """Process a user message and stream OpenAI's response."""
 
     session.add_message("user", user_content)
 
@@ -181,14 +181,14 @@ async def _handle_message(
     elif mode == "advanced":
         session.add_message("user", "[MODE: Advanced — full analysis with SHAP and action plan]")
 
-    # Build messages for Claude
-    claude_messages = [
+    # Build messages for OpenAI
+    openai_messages = [{"role": "system", "content": system_prompt}] + [
         {"role": m["role"], "content": m["content"]}
         for m in session.messages
     ]
 
-    # Call Claude API
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    # Call OpenAI API
+    api_key = os.getenv("OPENAI_API_KEY", "")
 
     if not api_key:
         # Demo mode: generate a smart canned response
@@ -196,18 +196,21 @@ async def _handle_message(
         return
 
     try:
-        import anthropic
+        import openai
 
-        client = anthropic.Anthropic(api_key=api_key)
+        client = openai.AsyncOpenAI(api_key=api_key)
 
         full_response = ""
-        with client.messages.stream(
-            model="claude-sonnet-4-20250514",
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=openai_messages,
             max_tokens=1024,
-            system=system_prompt,
-            messages=claude_messages,
-        ) as stream:
-            for text in stream.text_stream:
+            stream=True,
+        )
+
+        async for chunk in response:
+            if chunk.choices and chunk.choices[0].delta.content is not None:
+                text = chunk.choices[0].delta.content
                 full_response += text
                 await websocket.send_json({
                     "type": "token",
@@ -218,7 +221,7 @@ async def _handle_message(
         await websocket.send_json({"type": "done"})
 
     except Exception as e:
-        logger.warning("Claude API error: %s — using demo response", e)
+        logger.warning("OpenAI API error: %s — using demo response", e)
         await _send_demo_response(websocket, session, user_content, ctx)
 
     # Trim and save
@@ -238,7 +241,7 @@ async def _send_demo_response(
     user_content: str,
     ctx,
 ) -> None:
-    """Smart demo response when Claude API is unavailable."""
+    """Smart demo response when OpenAI API is unavailable."""
     import asyncio
 
     query = user_content.lower()

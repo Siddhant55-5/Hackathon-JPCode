@@ -195,3 +195,64 @@ async def replay_frames(replay_id: str):
         from fastapi import HTTPException
         raise HTTPException(404, f"Replay '{replay_id}' not found")
     return frames
+
+from fastapi import WebSocket, WebSocketDisconnect
+
+@app.websocket("/ws/dashboard")
+async def dashboard_websocket(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        from app.core.redis import get_redis
+        import json as _json
+        r = await get_redis()
+        score_last_id = "$"
+        alert_last_id = "$"
+        while True:
+            # Read from BOTH streams simultaneously
+            messages = await r.xread(
+                {"scores.live": score_last_id, "alerts.live": alert_last_id},
+                count=20, block=2000
+            )
+            if messages:
+                for stream_name, entries in messages:
+                    sname = stream_name.decode('utf-8') if isinstance(stream_name, bytes) else stream_name
+                    for msg_id, fields in entries:
+                        if sname == "scores.live":
+                            score_last_id = msg_id
+                            raw = fields.get(b"payload", fields.get("payload", b"[]"))
+                            if isinstance(raw, bytes):
+                                raw = raw.decode('utf-8')
+                            try:
+                                data = _json.loads(raw)
+                                await websocket.send_json({"type": "score_update", "data": data})
+                            except Exception:
+                                pass
+
+                        elif sname == "alerts.live":
+                            alert_last_id = msg_id
+
+                            def _s(v):
+                                if isinstance(v, bytes): return v.decode('utf-8')
+                                if v is None: return ""
+                                return str(v)
+
+                            alert_data = {
+                                "id": _s(fields.get(b"alert_id", fields.get("alert_id", "1"))),
+                                "crisis_type": _s(fields.get(b"crisis_type", fields.get("crisis_type", ""))),
+                                "score": float(_s(fields.get(b"score", fields.get("score", "0")))),
+                                "ci_lower": float(_s(fields.get(b"ci_lower", fields.get("ci_lower", "0")))),
+                                "ci_upper": float(_s(fields.get(b"ci_upper", fields.get("ci_upper", "100")))),
+                                "severity": _s(fields.get(b"severity", fields.get("severity", ""))),
+                                "reason": _s(fields.get(b"reason", fields.get("reason", ""))),
+                                "triggered_at": _s(fields.get(b"triggered_at", fields.get("triggered_at", ""))),
+                                "recommended_actions": [_s(fields.get(b"reason", fields.get("reason", "")))]
+                            }
+
+                            await websocket.send_json({"type": "alert", "data": alert_data})
+
+            await asyncio.sleep(0.1)
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"Dashboard WS error: {e}")
+
